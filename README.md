@@ -142,4 +142,3 @@ Environment variables can be set in a `.env` file:
 ## License
 
 MIT
-# Auto-deploy test
