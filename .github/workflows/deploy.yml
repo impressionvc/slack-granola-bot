@@ -16,17 +16,25 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
           script: |
-            cd ~/granola-bot
+            set -e
+            echo "🚀 Starting deployment..."
             
-            # Pull latest code
-            git pull origin main
+            cd ~/slack-granola-bot
             
-            # Rebuild and restart container
-            docker-compose down
-            docker-compose up -d --build
+            echo "📥 Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
             
-            # Show status
-            docker-compose ps
+            echo "🛑 Stopping containers..."
+            docker-compose down || true
+            
+            echo "🔨 Rebuilding (this may take a few minutes)..."
+            docker-compose build --no-cache
+            
+            echo "🚀 Starting containers..."
+            docker-compose up -d
             
             echo "✅ Deployment complete!"
+            docker-compose ps
