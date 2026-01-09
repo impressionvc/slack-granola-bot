@@ -1,10 +1,13 @@
 """Scraper for Granola meeting notes using Playwright."""
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+from src.config import IMPRESSION_TEAM_NAMES, IMPRESSION_TEAM_MEMBERS
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +19,97 @@ class ScrapeResult:
     content: Optional[str] = None
     error: Optional[str] = None
     requires_login: bool = False
+    title: Optional[str] = None  # Raw title for company name extraction
+
+
+def extract_company_name(title: str) -> Optional[str]:
+    """Extract company name from a meeting title by filtering out Impression team names.
+
+    Args:
+        title: The meeting note title (e.g., "Acme Corp x Impression Ventures").
+
+    Returns:
+        The company name with team names filtered out, or None if no company found.
+    """
+    if not title:
+        return None
+
+    # Common separators in meeting titles (including without spaces)
+    separators = [" <> ", "<>", " x ", " X ", " - ", " | ", " / ", "/", " & ", " and ", " with "]
+    
+    # Common meeting words to filter out
+    skip_words = {
+        "intro", "introduction", "call", "meeting", "sync", "check-in", 
+        "checkin", "follow-up", "followup", "chat", "discussion", "review",
+        "demo", "presentation", "kickoff", "onboarding", "interview",
+    }
+    
+    # Split by separators and collect parts
+    parts = [title]
+    for sep in separators:
+        new_parts = []
+        for part in parts:
+            new_parts.extend(part.split(sep))
+        parts = new_parts
+    
+    # Filter and find the company name
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        
+        part_lower = part.lower()
+        
+        # Skip if it's just a meeting word (e.g., "Intro")
+        if part_lower in skip_words:
+            continue
+        
+        # Skip if it's a team name
+        if part_lower in IMPRESSION_TEAM_NAMES:
+            continue
+        
+        # Check if this part contains only team names and skip words
+        part_words = re.findall(r'\w+', part_lower)
+        remaining_words = [w for w in part_words if w not in IMPRESSION_TEAM_NAMES and w not in skip_words]
+        
+        if not remaining_words:
+            continue
+        
+        # Return the cleaned-up part (just the meaningful words)
+        # If the part has extra words mixed in, extract just the company name
+        if len(remaining_words) == len(part_words):
+            # All words are meaningful, return as-is
+            return part
+        else:
+            # Some words were filtered, return just the remaining words
+            return " ".join(word.capitalize() for word in remaining_words)
+    
+    return None
+
+
+def extract_team_member_from_title(title: str) -> Optional[str]:
+    """Extract Impression team member name from a meeting title.
+
+    Args:
+        title: The meeting note title (e.g., "Christian x Acme Corp").
+
+    Returns:
+        The team member's name (capitalized) if found, or None.
+    """
+    if not title:
+        return None
+
+    title_lower = title.lower()
+    
+    # Check if any team member name appears in the title
+    for member in IMPRESSION_TEAM_MEMBERS:
+        # Use word boundary check to avoid partial matches
+        # e.g., "christian" shouldn't match "christiansen"
+        import re
+        if re.search(rf'\b{member}\b', title_lower):
+            return member.capitalize()
+    
+    return None
 
 
 def scrape_granola_page(url: str, timeout: int = 90) -> ScrapeResult:
@@ -81,7 +175,7 @@ def scrape_granola_page(url: str, timeout: int = 90) -> ScrapeResult:
                     )
 
                 logger.info("Successfully extracted %d characters", len(content))
-                return ScrapeResult(success=True, content=content)
+                return ScrapeResult(success=True, content=content, title=title)
 
             except PlaywrightTimeout as e:
                 logger.error("Page load timed out: %s", e)

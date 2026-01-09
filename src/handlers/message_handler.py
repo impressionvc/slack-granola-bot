@@ -1,12 +1,19 @@
 """Message event handler for the Slack bot."""
 
 import logging
+from typing import Optional, Dict, Any
+
 from slack_bolt import App
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-from src.config import Config
-from src.scrapers.granola_scraper import scrape_granola_page, truncate_content
+from src.config import Config, DEALFLOW_CHANNELS
+from src.scrapers.granola_scraper import (
+    scrape_granola_page,
+    truncate_content,
+    extract_company_name,
+    extract_team_member_from_title,
+)
 from src.utils.url_utils import clean_url, extract_granola_url
 
 logger = logging.getLogger(__name__)
@@ -29,13 +36,70 @@ class MessageHandler:
         logger.info("WebClient initialized with token")
         
         # Get our own bot ID to prevent self-replies
-        self._own_bot_id = None
+        self._own_bot_id: Optional[str] = None
         try:
             auth_response = self._client.auth_test()
             self._own_bot_id = auth_response.get("bot_id")
             logger.info("Own bot ID: %s", self._own_bot_id)
         except Exception as e:
             logger.warning("Could not fetch own bot ID: %s", e)
+
+        # Cache for channel names (channel_id -> channel_name)
+        self._channel_name_cache: Dict[str, str] = {}
+
+    def _get_channel_name(self, channel_id: str) -> Optional[str]:
+        """Get the channel name from a channel ID.
+
+        Args:
+            channel_id: The Slack channel ID.
+
+        Returns:
+            The channel name (without #), or None if lookup fails.
+        """
+        # Check cache first
+        if channel_id in self._channel_name_cache:
+            return self._channel_name_cache[channel_id]
+
+        try:
+            response = self._client.conversations_info(channel=channel_id)
+            if response.get("ok"):
+                channel_name = response.get("channel", {}).get("name")
+                if channel_name:
+                    self._channel_name_cache[channel_id] = channel_name
+                    return channel_name
+        except SlackApiError as e:
+            logger.warning("Could not fetch channel name for %s: %s", channel_id, e)
+        except Exception as e:
+            logger.warning("Error fetching channel name: %s", e)
+
+        return None
+
+    def _get_user_display_name(self, user_id: str) -> Optional[str]:
+        """Get a user's display name from their user ID.
+
+        Args:
+            user_id: The Slack user ID.
+
+        Returns:
+            The user's display name or real name, or None if lookup fails.
+        """
+        try:
+            response = self._client.users_info(user=user_id)
+            if response.get("ok"):
+                user = response.get("user", {})
+                profile = user.get("profile", {})
+                # Prefer display name, fall back to real name
+                return (
+                    profile.get("display_name")
+                    or profile.get("real_name")
+                    or user.get("name")
+                )
+        except SlackApiError as e:
+            logger.warning("Could not fetch user name for %s: %s", user_id, e)
+        except Exception as e:
+            logger.warning("Error fetching user name: %s", e)
+
+        return None
 
     def register(self, app: App) -> None:
         """Register event handlers with the Slack app.
@@ -131,6 +195,20 @@ class MessageHandler:
         if not channel:
             return
 
+        # Get the user who sent the message (for dealflow formatting)
+        # When a human posts directly, event["user"] is set
+        # When Granola's bot posts, we need to check for alternative sources
+        user_id: Optional[str] = event.get("user")
+        
+        # Debug: log user info for dealflow troubleshooting
+        if not user_id:
+            logger.info("No user_id in event - checking for bot message metadata")
+            logger.info("  bot_id: %s", event.get("bot_id"))
+            logger.info("  bot_profile: %s", event.get("bot_profile", {}).get("name"))
+            # Some integrations include the triggering user
+            if event.get("username"):
+                logger.info("  username field found: %s", event.get("username"))
+
         # Clean the URL
         clean_granola_url = clean_url(granola_url)
         logger.info("=" * 60)
@@ -187,9 +265,48 @@ class MessageHandler:
             )
             return
 
+        # Check if this is a dealflow channel (needs special formatting)
+        channel_name = self._get_channel_name(channel)
+        is_dealflow = channel_name and channel_name in DEALFLOW_CHANNELS
+
+        # Build final content
+        content = result.content
+        
+        if is_dealflow:
+            # Add Company/On Call header for dealflow channels
+            header_parts = []
+            
+            # Extract company name from title
+            company = extract_company_name(result.title) if result.title else None
+            if company:
+                header_parts.append(f"*Company/Founder:* {company}")
+            
+            # Get "On Call" - first try to extract from title, then fall back to sender
+            on_call_name = None
+            
+            # Try to find team member name in title (e.g., "Christian x Acme Corp")
+            if result.title:
+                on_call_name = extract_team_member_from_title(result.title)
+                if on_call_name:
+                    logger.info("Found team member in title: %s", on_call_name)
+            
+            # Fall back to message sender if no team member in title
+            if not on_call_name and user_id:
+                on_call_name = self._get_user_display_name(user_id)
+                if on_call_name:
+                    logger.info("Using sender name: %s", on_call_name)
+            
+            if on_call_name:
+                header_parts.append(f"*On Call:* {on_call_name}")
+            
+            if header_parts:
+                header = "\n".join(header_parts)
+                content = f"{header}\n\n{content}"
+                logger.info("Added dealflow header: %s", header.replace("\n", " | "))
+
         # Truncate if needed
         content = truncate_content(
-            result.content,
+            content,
             max_length=self._config.max_content_length,
         )
 

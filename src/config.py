@@ -3,9 +3,35 @@
 import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from dotenv import load_dotenv
+
+# Names to filter out when extracting company name from meeting titles
+IMPRESSION_TEAM_NAMES: Tuple[str, ...] = (
+    "impression",
+    "christian",
+    "maor",
+    "quinn",
+    "erica",
+    "saket",
+    "ventures",
+)
+
+# Actual team member names (for extracting "On Call" from title)
+IMPRESSION_TEAM_MEMBERS: Tuple[str, ...] = (
+    "christian",
+    "maor",
+    "quinn",
+    "erica",
+    "saket",
+)
+
+# Channels that get special dealflow formatting (Company / On Call header)
+DEALFLOW_CHANNELS: Tuple[str, ...] = (
+    "dealflow",
+    "granola-scraper-test",
+)
 
 
 @dataclass(frozen=True)
