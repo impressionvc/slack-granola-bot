@@ -7,8 +7,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install system dependencies required by Playwright/Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,9 +37,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash botuser
-
 # Set working directory
 WORKDIR /app
 
@@ -50,23 +46,11 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create Playwright browser directory and install Chromium
-RUN mkdir -p /opt/playwright \
-    && playwright install chromium \
-    && chmod -R 755 /opt/playwright
+# Install Playwright Chromium browser
+RUN playwright install chromium
 
 # Copy application code
 COPY src/ ./src/
-
-# Change ownership to non-root user
-RUN chown -R botuser:botuser /app
-
-# Switch to non-root user
-USER botuser
-
-# Health check - verify the bot can import successfully
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "from src.main import create_app; print('OK')" || exit 1
 
 # Run the bot
 CMD ["python", "-m", "src.main"]
