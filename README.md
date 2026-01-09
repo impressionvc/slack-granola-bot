@@ -1,5 +1,7 @@
 # Granola Link Scraper Slack Bot
 
+<!-- Deployed via GitHub Actions -->
+
 A Python Slack bot that monitors channels for Granola meeting note links, scrapes the content, and posts a summary as a threaded reply.
 
 ## Features
