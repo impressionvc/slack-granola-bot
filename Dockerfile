@@ -7,7 +7,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 # Install system dependencies required by Playwright/Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -49,8 +50,10 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers (Chromium only to save space)
-RUN playwright install chromium
+# Create Playwright browser directory and install Chromium
+RUN mkdir -p /opt/playwright \
+    && playwright install chromium \
+    && chmod -R 755 /opt/playwright
 
 # Copy application code
 COPY src/ ./src/
